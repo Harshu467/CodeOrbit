@@ -1,0 +1,19 @@
+{
+  "name": "@codeorbit/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@codeorbit/domain": "workspace:*",
+    "@codeorbit/persistence": "workspace:*",
+    "@codeorbit/github-provider": "workspace:*",
+    "@codeorbit/source-provider-contracts": "workspace:*",
+    "@codeorbit/api-contracts": "workspace:*",
+    "fastify": "^5.2.2",
+    "zod": "^3.24.2"
+  }
+}

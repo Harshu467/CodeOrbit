@@ -1,0 +1,11 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "packages/source-providers/*"
+  - "packages/analyzers/*"
+
+allowBuilds:
+  esbuild: true
+  tree-sitter: true
+  tree-sitter-javascript: true
+  tree-sitter-typescript: true

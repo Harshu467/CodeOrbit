@@ -1,0 +1,454 @@
+openapi: 3.1.0
+info:
+  title: CodeOrbit Repository Analysis API
+  version: 1.0.0
+  description: Provider-adapted repository registration and durable analysis operations.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths:
+  /integrations/github/install:
+    get:
+      operationId: beginGitHubInstallation
+      summary: Begin GitHub App installation
+      description: >
+        Redirects the authenticated user to the GitHub App installation page.
+        The installation must grant access only to repositories selected by
+        the user or organization.
+      responses:
+        '302':
+          description: Redirect to GitHub App installation.
+          headers:
+            Location:
+              description: GitHub App installation URL.
+              schema:
+                type: string
+                format: uri
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /integrations/github/installations/callback:
+    get:
+      operationId: completeGitHubInstallation
+      summary: Complete GitHub App installation
+      security: []
+      description: >
+        Validates the installation callback and records an opaque provider
+        connection reference. Installation tokens and private keys are never
+        returned to the caller.
+      parameters:
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: installation_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: setup_action
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '303':
+          description: Redirect to the repository connection experience.
+          headers:
+            Location:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /integrations/github/repositories:
+    get:
+      operationId: listAuthorizedGitHubRepositories
+      summary: List repositories available to the active GitHub installation
+      responses:
+        '200':
+          description: Repositories available for the user to connect.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GitHubRepositoryChoice'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /repositories:
+    post:
+      operationId: createRepository
+      summary: Connect a repository
+      description: >
+        Registers a source repository accessible through the current user's
+        configured provider connection. Provider details are accepted at this
+        integration boundary and are not part of the core Repository model.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRepositoryRequest'
+      responses:
+        '201':
+          description: Repository connected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Repository'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    get:
+      operationId: listRepositories
+      summary: List connected repositories
+      responses:
+        '200':
+          description: Connected repositories visible to the caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Repository'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /repositories/{repositoryId}:
+    parameters:
+      - $ref: '#/components/parameters/RepositoryId'
+    get:
+      operationId: getRepository
+      summary: Retrieve a connected repository
+      responses:
+        '200':
+          description: Repository resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Repository'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /repositories/{repositoryId}/analysis-runs:
+    parameters:
+      - $ref: '#/components/parameters/RepositoryId'
+    post:
+      operationId: startAnalysis
+      summary: Start repository analysis
+      description: >
+        Resolves the requested ref to an immutable revision before scheduling
+        work. Active work for the same revision and analysis configuration is
+        reused unless createDistinctRun is true.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartAnalysisRequest'
+      responses:
+        '202':
+          description: Analysis run created or existing active run reused.
+          headers:
+            Location:
+              description: URL of the analysis run resource.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisRun'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /analysis-runs/{runId}:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    get:
+      operationId: getAnalysisRun
+      summary: Retrieve analysis status and stage progress
+      responses:
+        '200':
+          description: Current or terminal analysis run state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisRun'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /analysis-runs/{runId}/summary:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    get:
+      operationId: getAnalysisSummary
+      summary: Retrieve analysis summary counts and issues
+      responses:
+        '200':
+          description: Summary for a run, including explicit partial/failed state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >
+        Optional caller key scoped to the authenticated workspace. Reuse with
+        the same request returns the associated resource; a different request
+        with the same key returns 409.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
+    RepositoryId:
+      name: repositoryId
+      in: path
+      required: true
+      schema:
+        type: string
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    GitHubRepositoryChoice:
+      type: object
+      required: [providerRepositoryId, fullName, uri]
+      properties:
+        providerRepositoryId:
+          type: string
+          description: Opaque provider identifier kept at the integration boundary.
+        fullName:
+          type: string
+        uri:
+          type: string
+          format: uri
+    CreateRepositoryRequest:
+      type: object
+      required: [source]
+      properties:
+        source:
+          type: object
+          required: [provider, uri]
+          properties:
+            provider:
+              type: string
+              description: Provider adapter key; github is the initial supported value.
+              enum: [github]
+            uri:
+              type: string
+              format: uri
+              description: Canonical provider source address selected by the caller.
+        displayName:
+          type: string
+          maxLength: 200
+    Repository:
+      type: object
+      required: [id, displayName, state, createdAt]
+      properties:
+        id:
+          type: string
+        displayName:
+          type: string
+        state:
+          type: string
+          enum: [active, disconnected]
+        createdAt:
+          type: string
+          format: date-time
+    StartAnalysisRequest:
+      type: object
+      properties:
+        revision:
+          type: string
+          description: Optional branch, tag, or revision request; resolved and pinned before work is queued.
+        createDistinctRun:
+          type: boolean
+          default: false
+          description: Create a separate run instead of reusing active work for the same snapshot/configuration.
+    AnalysisStage:
+      type: object
+      required: [name, status, attemptCount]
+      properties:
+        name:
+          type: string
+          enum: [acquisition, file_discovery, language_detection, parsing, symbol_extraction, relationship_extraction, persistence]
+        status:
+          type: string
+          enum: [queued, running, completed, partial, failed, skipped]
+        attemptCount:
+          type: integer
+          minimum: 0
+        progress:
+          type: object
+          properties:
+            current:
+              type: integer
+              minimum: 0
+            total:
+              type: integer
+              minimum: 0
+        error:
+          $ref: '#/components/schemas/AnalysisError'
+    AnalysisRun:
+      type: object
+      required: [id, repositoryId, status, stages, createdAt]
+      properties:
+        id:
+          type: string
+        repositoryId:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, completed, partial, failed]
+        requestedRevision:
+          type: string
+        snapshotRevision:
+          type: string
+          description: Opaque immutable provider revision identifier.
+        stages:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnalysisStage'
+        createdAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        nextAttemptAt:
+          type: string
+          format: date-time
+          description: Time when a bounded transient retry becomes eligible for another worker claim.
+        reused:
+          type: boolean
+          description: Present on start responses; true when idempotency or active-run deduplication reused a run.
+        error:
+          $ref: '#/components/schemas/AnalysisError'
+    AnalysisSummary:
+      type: object
+      required: [runId, status, counts, issues]
+      properties:
+        runId:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, completed, partial, failed]
+        counts:
+          type: object
+          required: [files, projects, symbols, apis, tests, dependencies, relationships]
+          properties:
+            files:
+              type: integer
+              minimum: 0
+            projects:
+              type: integer
+              minimum: 0
+            symbols:
+              type: integer
+              minimum: 0
+            apis:
+              type: integer
+              minimum: 0
+            tests:
+              type: integer
+              minimum: 0
+            dependencies:
+              type: integer
+              minimum: 0
+            relationships:
+              type: integer
+              minimum: 0
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnalysisError'
+    AnalysisError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+          description: Sanitized description; never includes credentials or full source.
+        stage:
+          type: string
+        path:
+          type: string
+          description: Optional repository-relative affected path.
+  responses:
+    BadRequest:
+      description: Invalid request shape.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AnalysisError'
+    Unauthorized:
+      description: Caller is not authenticated.
+    Forbidden:
+      description: Caller lacks access to the repository or workspace.
+    NotFound:
+      description: Repository or run does not exist or is not visible to the caller.
+    Conflict:
+      description: Idempotency key conflict or incompatible duplicate request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AnalysisError'
+    Unprocessable:
+      description: Source cannot be resolved, accessed, or analyzed as requested.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AnalysisError'

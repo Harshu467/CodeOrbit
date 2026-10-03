@@ -1,0 +1,11 @@
+{
+  "projects": 2,
+  "files": 5,
+  "symbols": 8,
+  "apis": 1,
+  "tests": 1,
+  "relationships": {
+    "observed": 4,
+    "unresolved": 1
+  }
+}

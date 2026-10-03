@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: codeorbit
+      POSTGRES_USER: codeorbit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - codeorbit-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codeorbit -d codeorbit"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  codeorbit-postgres:
