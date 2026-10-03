@@ -95,7 +95,7 @@ Every task follows `- [ ] T### [P?] [US?] Description with file path`.
 - [X] T035 [US2] Implement `POST /api/v1/repositories/{repositoryId}/analysis-runs` and `GET /api/v1/analysis-runs/{runId}` with `202 Accepted`, `Location`, seven stage records, progress, timestamps, and sanitized errors in `apps/api/src/routes/analysis-runs.ts`.
 - [ ] T036 [US2] Implement database-backed worker claim, lease heartbeat, attempt persistence, stale-worker fencing, and bounded transient retry with capped backoff in `apps/analysis-worker/src/runner.ts` and `apps/analysis-worker/src/retry-policy.ts`.
 - [ ] T037 [US2] Implement acquisition, file discovery, language detection, parsing, symbol extraction, relationship extraction, and persistence stage dispatch with durable transition updates in `apps/analysis-worker/src/pipeline.ts`.
-- [ ] T038 [US2] Implement run progress, retry-wait, duplicate-run, and terminal error views in `apps/web/src/app/analysis-runs/[runId]/page.tsx` and `apps/web/src/components/analysis-progress.tsx`.
+- [X] T038 [US2] Implement run progress, retry-wait, duplicate-run, and terminal error views in `apps/web/src/app/analysis-runs/[runId]/page.tsx` and `apps/web/src/components/analysis-progress.tsx`.
 
 **Checkpoint**: Runs are revision-pinned and observable, duplicate active work is not repeated by default, and exhausted transient retries end in failed status with the stage and reason.
 

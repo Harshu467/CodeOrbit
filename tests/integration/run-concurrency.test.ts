@@ -2,17 +2,19 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   claimNextJob,
   closePool,
+  completeWorkerStage,
   getPool,
   isJobLeaseCurrent,
   recordWorkerFailure,
   renewJobLease,
+  startWorkerStage,
 } from '../../packages/persistence/src/index.js';
 import { AnalysisRunService } from '../../apps/api/src/services/analysis-run-service.js';
 
 const enabled = Boolean(process.env.DATABASE_URL);
 
 describe.skipIf(!enabled)('analysis run concurrency and leases', () => {
-  const pool = getPool();
+  let pool: ReturnType<typeof getPool>;
   const workspaceId = `run-test-${crypto.randomUUID()}`;
   const userId = 'run-integration-user';
   const repositoryId = crypto.randomUUID();
@@ -21,7 +23,11 @@ describe.skipIf(!enabled)('analysis run concurrency and leases', () => {
   const runIds = [crypto.randomUUID(), crypto.randomUUID()];
 
   beforeAll(async () => {
-    await pool.query('INSERT INTO workspaces (id, name) VALUES ($1, $2)', [workspaceId, 'Run test']);
+    pool = getPool();
+    await pool.query('INSERT INTO workspaces (id, name) VALUES ($1, $2)', [
+      workspaceId,
+      'Run test',
+    ]);
     await pool.query(
       'INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, $3)',
       [workspaceId, userId, 'owner'],
@@ -86,6 +92,13 @@ describe.skipIf(!enabled)('analysis run concurrency and leases', () => {
       expect(first?.runId).not.toBe(second?.runId);
 
       const stale = first!;
+      const staleAttempt = await startWorkerStage(
+        firstClient,
+        stale,
+        'acquisition',
+        crypto.randomUUID(),
+      );
+      expect(staleAttempt).toBe(1);
       expect(await isJobLeaseCurrent(firstClient, stale.runId, stale.leaseGeneration)).toBe(true);
       await pool.query(
         `UPDATE analysis_runs SET lease_expires_at = now() - interval '1 second' WHERE id = $1`,
@@ -96,19 +109,62 @@ describe.skipIf(!enabled)('analysis run concurrency and leases', () => {
       expect(reclaimed?.leaseGeneration).toBe(stale.leaseGeneration + 1);
       expect(await isJobLeaseCurrent(firstClient, stale.runId, stale.leaseGeneration)).toBe(false);
       expect(await renewJobLease(firstClient, stale.runId, stale.leaseGeneration)).toBe(false);
+      expect(await completeWorkerStage(firstClient, stale, 'acquisition', staleAttempt!)).toBe(
+        false,
+      );
+      expect(
+        await recordWorkerFailure(
+          firstClient,
+          stale,
+          { retry: false, delayMs: 0 },
+          'stale_failure',
+          'acquisition',
+          staleAttempt!,
+        ),
+      ).toBe(false);
+      const currentAttempt = await startWorkerStage(
+        firstClient,
+        reclaimed!,
+        'acquisition',
+        crypto.randomUUID(),
+      );
+      expect(currentAttempt).toBe(2);
       expect(
         await recordWorkerFailure(
           firstClient,
           reclaimed!,
           { retry: true, delayMs: 2_000 },
           'temporary_failure',
+          'acquisition',
+          currentAttempt!,
         ),
       ).toBe(true);
-      const retryState = await pool.query<{ status: string; attempt_count: number }>(
-        'SELECT status, attempt_count FROM analysis_runs WHERE id = $1',
+      const retryState = await pool.query<{
+        status: string;
+        attempt_count: number;
+        completed_at: Date | null;
+        stage_status: string;
+        stage_error_code: string | null;
+        attempt_statuses: string[];
+      }>(
+        `SELECT r.status, r.attempt_count, r.completed_at,
+                s.status AS stage_status, s.error_code AS stage_error_code,
+                array_agg(a.status ORDER BY a.attempt_number) AS attempt_statuses
+         FROM analysis_runs r
+         JOIN analysis_stages s ON s.run_id = r.id AND s.name = 'acquisition'
+         JOIN analysis_attempts a ON a.run_id = r.id AND a.stage_name = s.name
+         WHERE r.id = $1
+         GROUP BY r.id, s.status, s.error_code`,
         [stale.runId],
       );
-      expect(retryState.rows[0]).toEqual({ status: 'queued', attempt_count: 2 });
+      expect(retryState.rows[0]).toMatchObject({
+        status: 'queued',
+        attempt_count: 2,
+        completed_at: null,
+        stage_status: 'queued',
+        stage_error_code: 'temporary_failure',
+        attempt_statuses: ['failed', 'failed'],
+      });
 
       await expect(
         pool.query(
@@ -122,6 +178,77 @@ describe.skipIf(!enabled)('analysis run concurrency and leases', () => {
     } finally {
       firstClient.release();
       secondClient.release();
+    }
+  });
+
+  it('marks a failed terminal stage and run after the final transient attempt', async () => {
+    const runId = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO analysis_runs
+         (id, workspace_id, repository_id, source_binding_id, status,
+          snapshot_revision, analyzer_version, configuration_hash, created_by, attempt_count)
+       VALUES ($1, $2, $3, $4, 'queued', 'commit-exhausted', 'test', 'test-config', $5, 4)`,
+      [runId, workspaceId, repositoryId, sourceBindingId, userId],
+    );
+    for (const name of [
+      'acquisition',
+      'file_discovery',
+      'language_detection',
+      'parsing',
+      'symbol_extraction',
+      'relationship_extraction',
+      'persistence',
+    ]) {
+      await pool.query(
+        `INSERT INTO analysis_stages (workspace_id, run_id, name, status)
+         VALUES ($1, $2, $3, 'queued')`,
+        [workspaceId, runId, name],
+      );
+    }
+
+    const client = await pool.connect();
+    try {
+      const job = await claimNextJob(client);
+      expect(job?.runId).toBe(runId);
+      const attemptNumber = await startWorkerStage(client, job!, 'parsing', crypto.randomUUID());
+      expect(attemptNumber).toBe(1);
+      expect(
+        await recordWorkerFailure(
+          client,
+          job!,
+          { retry: false, delayMs: 0 },
+          'parser_unavailable',
+          'parsing',
+          attemptNumber!,
+        ),
+      ).toBe(true);
+      const terminal = await pool.query<{
+        run_status: string;
+        completed_at: Date | null;
+        run_error: string | null;
+        stage_status: string;
+        stage_error: string | null;
+        attempt_status: string;
+      }>(
+        `SELECT r.status AS run_status, r.completed_at, r.error_summary AS run_error,
+                s.status AS stage_status, s.error_summary AS stage_error, a.status AS attempt_status
+         FROM analysis_runs r
+         JOIN analysis_stages s ON s.run_id = r.id AND s.name = 'parsing'
+         JOIN analysis_attempts a ON a.run_id = r.id AND a.stage_name = s.name
+         WHERE r.id = $1`,
+        [runId],
+      );
+      expect(terminal.rows[0]).toMatchObject({
+        run_status: 'failed',
+        run_error: 'Analysis failed during parsing; the worker attempt has been exhausted.',
+        stage_status: 'failed',
+        stage_error: 'Analysis failed during parsing; the worker attempt has been exhausted.',
+        attempt_status: 'failed',
+      });
+      expect(terminal.rows[0]?.completed_at).toBeInstanceOf(Date);
+      expect(terminal.rows[0]?.run_error).not.toContain('secret');
+    } finally {
+      client.release();
     }
   });
 
