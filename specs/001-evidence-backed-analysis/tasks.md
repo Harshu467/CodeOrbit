@@ -93,8 +93,8 @@ Every task follows `- [ ] T### [P?] [US?] Description with file path`.
 - [X] T033 [US2] Implement source-ref resolution, immutable `snapshot_revision` assignment, and snapshot acquisition result normalization in `packages/source-providers/contracts/src/snapshot.ts` and `packages/source-providers/github/src/github-source-provider.ts`.
 - [X] T034 [US2] Implement start-analysis service with request hashing, workspace-scoped idempotency, and active-run deduplication in `apps/api/src/services/analysis-run-service.ts`; enforce “Reuse with the same request returns the associated run; reuse with a different request hash returns conflict” and deduplicate by `(snapshot_revision, analyzer_version, configuration_hash)` only while matching work is active unless a distinct run is requested.
 - [X] T035 [US2] Implement `POST /api/v1/repositories/{repositoryId}/analysis-runs` and `GET /api/v1/analysis-runs/{runId}` with `202 Accepted`, `Location`, seven stage records, progress, timestamps, and sanitized errors in `apps/api/src/routes/analysis-runs.ts`.
-- [ ] T036 [US2] Implement database-backed worker claim, lease heartbeat, attempt persistence, stale-worker fencing, and bounded transient retry with capped backoff in `apps/analysis-worker/src/runner.ts` and `apps/analysis-worker/src/retry-policy.ts`.
-- [ ] T037 [US2] Implement acquisition, file discovery, language detection, parsing, symbol extraction, relationship extraction, and persistence stage dispatch with durable transition updates in `apps/analysis-worker/src/pipeline.ts`.
+- [X] T036 [US2] Implement database-backed worker claim, lease heartbeat, attempt persistence, stale-worker fencing, and bounded transient retry with capped backoff in `apps/analysis-worker/src/runner.ts` and `apps/analysis-worker/src/retry-policy.ts`.
+- [X] T037 [US2] Implement acquisition, file discovery, language detection, parsing, symbol extraction, relationship extraction, and persistence stage dispatch with durable transition updates in `apps/analysis-worker/src/pipeline.ts`.
 - [X] T038 [US2] Implement run progress, retry-wait, duplicate-run, and terminal error views in `apps/web/src/app/analysis-runs/[runId]/page.tsx` and `apps/web/src/components/analysis-progress.tsx`.
 
 **Checkpoint**: Runs are revision-pinned and observable, duplicate active work is not repeated by default, and exhausted transient retries end in failed status with the stage and reason.
@@ -107,23 +107,23 @@ Every task follows `- [ ] T### [P?] [US?] Description with file path`.
 
 ### Tests for User Story 3
 
-- [ ] T039 [P] [US3] Add Tree-sitter query fixture tests for JavaScript declarations, imports, exports, calls, inheritance, syntax errors, and malformed-source recovery in `tests/unit/javascript-extraction.test.ts`.
-- [ ] T040 [P] [US3] Add TypeScript and TSX grammar/query tests for interfaces, types, classes, exports, source spans, and Unicode location conversion in `tests/unit/typescript-extraction.test.ts`.
-- [ ] T041 [P] [US3] Add fixture tests for manifest-based projects, test recognition, dependency parsing, and overlapping project roots in `tests/unit/project-discovery.test.ts`.
-- [ ] T042 [P] [US3] Add fixture tests ensuring only explicitly supported conventions produce observed API/event/database relationships and ambiguous targets remain unresolved in `tests/unit/relationship-resolution.test.ts`.
-- [ ] T043 [P] [US3] Add PostgreSQL integration tests for entity run scoping, source evidence retention constraints, and same-name symbols in `tests/integration/system-model-persistence.test.ts`.
+- [X] T039 [P] [US3] Add Tree-sitter query fixture tests for JavaScript declarations, imports, exports, calls, inheritance, syntax errors, and malformed-source recovery in `tests/unit/javascript-extraction.test.ts`.
+- [X] T040 [P] [US3] Add TypeScript and TSX grammar/query tests for interfaces, types, classes, exports, source spans, and Unicode location conversion in `tests/unit/typescript-extraction.test.ts`.
+- [X] T041 [P] [US3] Add fixture tests for manifest-based projects, test recognition, dependency parsing, and overlapping project roots in `tests/unit/project-discovery.test.ts`.
+- [X] T042 [P] [US3] Add fixture tests ensuring only explicitly supported conventions produce observed API/event/database relationships and ambiguous targets remain unresolved in `tests/unit/relationship-resolution.test.ts`.
+- [X] T043 [P] [US3] Add PostgreSQL integration tests for entity run scoping, source evidence retention constraints, and same-name symbols in `tests/integration/system-model-persistence.test.ts`.
 
 ### Implementation for User Story 3
 
-- [ ] T044 [US3] Create Directory, Project, File, Symbol, API, Test, Dependency, Relationship, SourceEvidence, and AnalysisIssue schemas in `packages/persistence/src/migrations/0006_system_model.sql`; enforce File “`(run_id, path)` is unique” and “Unsupported/skipped/failed files remain visible and cannot be counted as parsed,” plus same-run foreign-key or repository validation for all model references.
-- [ ] T045 [US3] Implement repository directory/file discovery, generated/vendor/binary classification, and normalized repository-relative paths in `packages/analyzers/javascript-typescript/src/discovery.ts`; enforce “Path is normalized and unique within a run” and “A directory cannot be both included and excluded.”
-- [ ] T046 [US3] Implement project discovery from `package.json`, `pnpm-workspace.yaml`, and `tsconfig.json` project references plus repository structure; extract declared package and workspace dependencies with manifest-path evidence in `packages/analyzers/javascript-typescript/src/projects.ts`; enforce “Project path is repository-relative and unique within a run when deterministically identifiable” and “Overlapping/nested project roots are allowed; project membership resolution records uncertainty when ambiguous.”
-- [ ] T047 [US3] Pin JavaScript, TypeScript, and TSX grammar/query versions and implement deterministic Tree-sitter parsing with `ERROR`/`MISSING` issue capture in `packages/analyzers/javascript-typescript/src/parser.ts` and `packages/analyzers/javascript-typescript/queries/`.
-- [ ] T048 [US3] Implement symbol, import/export, API, and test extraction in `packages/analyzers/javascript-typescript/src/extract-symbols.ts`; enforce Symbol “Must reference a file in the same run,” “Source span must be valid and one-based when present,” and “Same-named symbols remain distinct using file, scope/qualification, kind, and source span”; enforce API “requires direct source evidence for its exposed declaration or endpoint pattern” and Test “Test recognition is based on declared V1 file/name/framework conventions or syntax patterns” and “An unresolvable target is retained as unresolved rather than omitted or guessed.”
-- [ ] T049 [US3] Implement deterministic relationship and dependency extraction in `packages/analyzers/javascript-typescript/src/extract-relationships.ts`; enforce Relationship “Both resolved endpoints must belong to the same run,” “Observed relationships require source evidence,” “Dynamic calls, generic events, and database operations are not marked observed without an explicit supported pattern and evidence,” and “Unresolved relationships may retain a textual target expression but not a fabricated entity ID”; enforce Dependency “Preserve declared dependencies even if the target cannot be resolved to an in-repository project.”
-- [ ] T050 [US3] Implement evidence excerpt redaction and source-location conversion in `packages/analyzers/javascript-typescript/src/evidence.ts`; enforce SourceEvidence “Must reference a file and immutable revision in the same run,” “Excerpts are bounded and sanitized; entire file contents are never retained as evidence,” and “Evidence location follows one-based line/column convention. Internal Tree-sitter byte offsets are converted before persistence,” with a 500-Unicode-code-point maximum excerpt; enforce AnalysisIssue errors/warnings do not expose tokens or sensitive source details.
-- [ ] T051 [US3] Implement normalized model persistence with per-stage transactions and run-scoped entity references in `packages/persistence/src/system-model-repository.ts`.
-- [ ] T052 [US3] Add multi-package JavaScript/TypeScript and failure fixtures plus expected model records for all required relationships in `tests/fixtures/repositories/standard/` and `tests/fixtures/repositories/failures/`.
+- [X] T044 [US3] Create Directory, Project, File, Symbol, API, Test, Dependency, Relationship, SourceEvidence, and AnalysisIssue schemas in `packages/persistence/src/migrations/0006_system_model.sql`; enforce File “`(run_id, path)` is unique” and “Unsupported/skipped/failed files remain visible and cannot be counted as parsed,” plus same-run foreign-key or repository validation for all model references.
+- [X] T045 [US3] Implement repository directory/file discovery, generated/vendor/binary classification, and normalized repository-relative paths in `packages/analyzers/javascript-typescript/src/discovery.ts`; enforce “Path is normalized and unique within a run” and “A directory cannot be both included and excluded.”
+- [X] T046 [US3] Implement project discovery from `package.json`, `pnpm-workspace.yaml`, and `tsconfig.json` project references plus repository structure; extract declared package and workspace dependencies with manifest-path evidence in `packages/analyzers/javascript-typescript/src/projects.ts`; enforce “Project path is repository-relative and unique within a run when deterministically identifiable” and “Overlapping/nested project roots are allowed; project membership resolution records uncertainty when ambiguous.”
+- [X] T047 [US3] Pin JavaScript, TypeScript, and TSX grammar/query versions and implement deterministic Tree-sitter parsing with `ERROR`/`MISSING` issue capture in `packages/analyzers/javascript-typescript/src/parser.ts` and `packages/analyzers/javascript-typescript/queries/`.
+- [X] T048 [US3] Implement symbol, import/export, API, and test extraction in `packages/analyzers/javascript-typescript/src/extract-symbols.ts`; enforce Symbol “Must reference a file in the same run,” “Source span must be valid and one-based when present,” and “Same-named symbols remain distinct using file, scope/qualification, kind, and source span”; enforce API “requires direct source evidence for its exposed declaration or endpoint pattern” and Test “Test recognition is based on declared V1 file/name/framework conventions or syntax patterns” and “An unresolvable target is retained as unresolved rather than omitted or guessed.”
+- [X] T049 [US3] Implement deterministic relationship and dependency extraction in `packages/analyzers/javascript-typescript/src/extract-relationships.ts`; enforce Relationship “Both resolved endpoints must belong to the same run,” “Observed relationships require source evidence,” “Dynamic calls, generic events, and database operations are not marked observed without an explicit supported pattern and evidence,” and “Unresolved relationships may retain a textual target expression but not a fabricated entity ID”; enforce Dependency “Preserve declared dependencies even if the target cannot be resolved to an in-repository project.”
+- [X] T050 [US3] Implement evidence excerpt redaction and source-location conversion in `packages/analyzers/javascript-typescript/src/evidence.ts`; enforce SourceEvidence “Must reference a file and immutable revision in the same run,” “Excerpts are bounded and sanitized; entire file contents are never retained as evidence,” and “Evidence location follows one-based line/column convention. Internal Tree-sitter byte offsets are converted before persistence,” with a 500-Unicode-code-point maximum excerpt; enforce AnalysisIssue errors/warnings do not expose tokens or sensitive source details.
+- [X] T051 [US3] Implement normalized model persistence with per-stage transactions and run-scoped entity references in `packages/persistence/src/system-model-repository.ts`.
+- [X] T052 [US3] Add multi-package JavaScript/TypeScript and failure fixtures plus expected model records for all required relationships in `tests/fixtures/repositories/standard/` and `tests/fixtures/repositories/failures/`.
 
 **Checkpoint**: The standard fixture produces the expected evidence-backed system model; unsupported files and parse damage remain visible, and ambiguous dynamic relationships are not asserted as observed.
 
@@ -135,17 +135,17 @@ Every task follows `- [ ] T### [P?] [US?] Description with file path`.
 
 ### Tests for User Story 4
 
-- [ ] T053 [P] [US4] Add contract tests for summary counts, issues, partial/failed status, unauthorized scope, and unknown run behavior in `tests/contract/analysis-summary.test.ts`.
-- [ ] T054 [P] [US4] Add integration tests for completed, partial, required-stage failure, exhausted-retry failure, and empty-repository summary semantics in `tests/integration/analysis-summary.test.ts`.
-- [ ] T055 [P] [US4] Add domain tests proving no run with an unsuccessful required stage can transition to completed in `tests/unit/run-completion-policy.test.ts`.
+- [X] T053 [P] [US4] Add contract tests for summary counts, issues, partial/failed status, unauthorized scope, and unknown run behavior in `tests/contract/analysis-summary.test.ts`.
+- [X] T054 [P] [US4] Add integration tests for completed, partial, required-stage failure, exhausted-retry failure, and empty-repository summary semantics in `tests/integration/analysis-summary.test.ts`.
+- [X] T055 [P] [US4] Add domain tests proving no run with an unsuccessful required stage can transition to completed in `tests/unit/run-completion-policy.test.ts`.
 
 ### Implementation for User Story 4
 
-- [ ] T056 [US4] Implement run completion policy for completed, partial, and failed outcomes, including useful persisted result detection and required-stage failure handling in `packages/domain/src/run-completion.ts`.
-- [ ] T057 [US4] Implement run-scoped counts for files, projects, symbols, APIs, tests, dependencies, and relationships plus sanitized issue retrieval in `packages/persistence/src/analysis-summary-repository.ts`.
-- [ ] T058 [US4] Implement `GET /api/v1/analysis-runs/{runId}/summary` with stable counts, issues, and explicit not-found/authorization semantics in `apps/api/src/routes/analysis-summary.ts`.
-- [ ] T059 [US4] Implement summary UI for entity counts, partial scope, failed stage, unresolved findings, and empty-result states in `apps/web/src/components/analysis-summary.tsx` and `apps/web/src/app/analysis-runs/[runId]/summary/page.tsx`.
-- [ ] T060 [US4] Enforce two-second p95 status/summary response target for the documented standard fixture and add a reproducible performance scenario in `tests/performance/analysis-read-path.test.ts`.
+- [X] T056 [US4] Implement run completion policy for completed, partial, and failed outcomes, including useful persisted result detection and required-stage failure handling in `packages/domain/src/run-completion.ts`.
+- [X] T057 [US4] Implement run-scoped counts for files, projects, symbols, APIs, tests, dependencies, and relationships plus sanitized issue retrieval in `packages/persistence/src/analysis-summary-repository.ts`.
+- [X] T058 [US4] Implement `GET /api/v1/analysis-runs/{runId}/summary` with stable counts, issues, and explicit not-found/authorization semantics in `apps/api/src/routes/analysis-summary.ts`.
+- [X] T059 [US4] Implement summary UI for entity counts, partial scope, failed stage, unresolved findings, and empty-result states in `apps/web/src/components/analysis-summary.tsx` and `apps/web/src/app/analysis-runs/[runId]/summary/page.tsx`.
+- [X] T060 [US4] Enforce two-second p95 status/summary response target for the documented standard fixture and add a reproducible performance scenario in `tests/performance/analysis-read-path.test.ts`.
 
 **Checkpoint**: Users can distinguish completed, partial, and failed runs from persisted counts/issues without false completion or credential/source-content leakage.
 
@@ -153,11 +153,11 @@ Every task follows `- [ ] T### [P?] [US?] Description with file path`.
 
 **Purpose**: Confirm integration boundaries, operational safety, and end-to-end acceptance across all stories.
 
-- [ ] T061 [P] Add operational metrics and alerts for stuck leases, retry exhaustion, stage latency, failure rates, and oversized snapshot partials in `apps/analysis-worker/src/observability/metrics.ts` and `apps/api/src/observability/metrics.ts`.
-- [ ] T062 [P] Document GitHub App setup, selected-repository permission configuration, token/key secret handling, and local PostgreSQL setup in `README.md` and `docs/github-app-setup.md`.
-- [ ] T063 [P] Document provider-port and language-analyzer extension contracts without introducing additional production providers or languages in `docs/extending-analysis.md`.
-- [ ] T064 Review API, worker, and persistence paths for workspace isolation, credential redaction, excerpt limits, and full-source non-retention in `docs/security-review-checklist.md`.
-- [ ] T065 Run the complete end-to-end and failure validation scenarios documented in `specs/001-evidence-backed-analysis/quickstart.md`, recording reproducible outputs in `tests/fixtures/repositories/standard/expected.json`.
+- [X] T061 [P] Add operational metrics and alerts for stuck leases, retry exhaustion, stage latency, failure rates, and oversized snapshot partials in `apps/analysis-worker/src/observability/metrics.ts` and `apps/api/src/observability/metrics.ts`.
+- [X] T062 [P] Document GitHub App setup, selected-repository permission configuration, token/key secret handling, and local PostgreSQL setup in `README.md` and `docs/github-app-setup.md`.
+- [X] T063 [P] Document provider-port and language-analyzer extension contracts without introducing additional production providers or languages in `docs/extending-analysis.md`.
+- [X] T064 Review API, worker, and persistence paths for workspace isolation, credential redaction, excerpt limits, and full-source non-retention in `docs/security-review-checklist.md`.
+- [X] T065 Run the complete end-to-end and failure validation scenarios documented in `specs/001-evidence-backed-analysis/quickstart.md`, recording reproducible outputs in `tests/fixtures/repositories/standard/expected.json`.
 
 ## Dependencies & Execution Order
 

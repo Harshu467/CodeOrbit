@@ -1,0 +1,7 @@
+{
+  "name": "@fixture/service",
+  "private": true,
+  "dependencies": {
+    "zod": "^3.0.0"
+  }
+}

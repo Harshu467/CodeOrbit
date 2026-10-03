@@ -386,7 +386,7 @@ components:
           enum: [queued, running, completed, partial, failed]
         counts:
           type: object
-          required: [files, projects, symbols, apis, tests, dependencies, relationships]
+          required: [files, projects, symbols, apis, tests, dependencies, relationships, unresolvedRelationships]
           properties:
             files:
               type: integer
@@ -407,6 +407,9 @@ components:
               type: integer
               minimum: 0
             relationships:
+              type: integer
+              minimum: 0
+            unresolvedRelationships:
               type: integer
               minimum: 0
         issues:

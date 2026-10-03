@@ -4,13 +4,24 @@ import {
   claimNextJob,
   completeWorkerStage,
   getPool,
+  finalizeWorkerRun,
+  getWorkerStageStatus,
   isJobLeaseCurrent,
   recordWorkerFailure,
   renewJobLease,
   startWorkerStage,
+  updateWorkerStageProgress,
 } from '@codeorbit/persistence';
+import { deriveRunStatus, STAGE_NAMES } from '@codeorbit/domain';
+import type { StageName, StageStatus } from '@codeorbit/domain';
 import type { ClaimedJob, WorkerStageName } from '@codeorbit/persistence';
 import { decideRetry } from './retry-policy.js';
+import {
+  recordWorkerFailure as recordWorkerFailureMetric,
+  recordWorkerRunCompletion,
+  recordWorkerStageCompletion,
+  recordWorkerStageDuration,
+} from './observability/metrics.js';
 
 const LEASE_SECONDS = 60;
 const HEARTBEAT_INTERVAL_MS = 20_000;
@@ -18,10 +29,17 @@ const HEARTBEAT_INTERVAL_MS = 20_000;
 export interface RunExecutionContext {
   assertLeaseCurrent(): Promise<void>;
   runStage<T>(stageName: WorkerStageName, execute: () => Promise<T>): Promise<T>;
+  updateProgress(stageName: WorkerStageName, current: number, total: number | null): Promise<void>;
+}
+
+export interface RunExecutionOutcome {
+  readonly usefulResults: boolean;
+  readonly itemIssues: boolean;
+  readonly errorSummary?: string;
 }
 
 export interface RunExecutor {
-  execute(job: ClaimedJob, context: RunExecutionContext): Promise<void>;
+  execute(job: ClaimedJob, context: RunExecutionContext): Promise<void | RunExecutionOutcome>;
 }
 
 export class StaleWorkerLeaseError extends Error {
@@ -68,7 +86,10 @@ export async function runNextJob(
   let heartbeatError: unknown;
   let heartbeatTimer: NodeJS.Timeout | undefined;
   let stopped = false;
-  let failedStage: { readonly name: WorkerStageName; readonly attemptNumber: number } | undefined;
+  let failedStage:
+    | { readonly name: WorkerStageName; readonly attemptNumber: number; readonly startedAt: number }
+    | undefined;
+  const replayingCompletedStages = new Set<WorkerStageName>();
   const scheduleHeartbeat = (): void => {
     if (stopped) return;
     heartbeatTimer = setTimeout(() => {
@@ -104,6 +125,27 @@ export async function runNextJob(
   };
   const runStage = async <T>(stageName: WorkerStageName, execute: () => Promise<T>): Promise<T> => {
     await assertLeaseCurrent();
+    const previous = await withClient(pool, (client) =>
+      getWorkerStageStatus(client, job, stageName),
+    );
+    if (!previous) {
+      leaseLost = true;
+      throw new StaleWorkerLeaseError();
+    }
+    if (previous.status === 'completed') {
+      replayingCompletedStages.add(stageName);
+      const startedAt = performance.now();
+      try {
+        return await execute();
+      } finally {
+        replayingCompletedStages.delete(stageName);
+        recordWorkerStageDuration(stageName, performance.now() - startedAt);
+      }
+    }
+    if (previous.status !== 'queued') {
+      leaseLost = true;
+      throw new StaleWorkerLeaseError();
+    }
     const attemptNumber = await withClient(pool, (client) =>
       startWorkerStage(client, job, stageName, randomUUID()),
     );
@@ -111,7 +153,8 @@ export async function runNextJob(
       leaseLost = true;
       throw new StaleWorkerLeaseError();
     }
-    failedStage = { name: stageName, attemptNumber };
+    const startedAt = performance.now();
+    failedStage = { name: stageName, attemptNumber, startedAt };
     const result = await execute();
     await assertLeaseCurrent();
     const completed = await withClient(pool, (client) =>
@@ -121,14 +164,57 @@ export async function runNextJob(
       leaseLost = true;
       throw new StaleWorkerLeaseError();
     }
+    recordWorkerStageCompletion(stageName, performance.now() - startedAt);
     failedStage = undefined;
     return result;
+  };
+  const updateProgress = async (
+    stageName: WorkerStageName,
+    current: number,
+    total: number | null,
+  ): Promise<void> => {
+    await assertLeaseCurrent();
+    if (replayingCompletedStages.has(stageName)) return;
+    const updated = await withClient(pool, (client) =>
+      updateWorkerStageProgress(client, job, stageName, current, total),
+    );
+    if (!updated) {
+      leaseLost = true;
+      throw new StaleWorkerLeaseError();
+    }
   };
   scheduleHeartbeat();
 
   try {
-    await executor.execute(job, { assertLeaseCurrent, runStage });
+    const outcome = await executor.execute(job, { assertLeaseCurrent, runStage, updateProgress });
     await assertLeaseCurrent();
+    const stageStatuses = await withClient(pool, async (client) => {
+      const result = await client.query<{ name: (typeof STAGE_NAMES)[number]; status: string }>(
+        `SELECT name, status FROM analysis_stages WHERE workspace_id = $1 AND run_id = $2`,
+        [job.workspaceId, job.runId],
+      );
+      return result.rows;
+    });
+    const finalStatus = deriveRunStatus({
+      stages: stageStatuses.map((stage) => ({
+        name: stage.name as StageName,
+        status: stage.status as StageStatus,
+      })),
+      usefulResults: outcome?.usefulResults ?? true,
+      itemIssues: outcome?.itemIssues ?? false,
+      retriesExhausted: false,
+    });
+    if (finalStatus === 'running' || finalStatus === 'queued') {
+      throw new Error('The worker pipeline returned before all required stages completed.');
+    }
+    const finalized = await withClient(pool, (client) =>
+      finalizeWorkerRun(client, job, finalStatus, outcome?.errorSummary),
+    );
+    if (!finalized) {
+      leaseLost = true;
+      throw new StaleWorkerLeaseError();
+    }
+    recordWorkerRunCompletion(finalStatus);
   } catch (error) {
     if (leaseLost || error instanceof StaleWorkerLeaseError) {
       if (heartbeatError instanceof Error) throw new StaleWorkerLeaseError();
@@ -136,13 +222,25 @@ export async function runNextJob(
     }
     await assertLeaseCurrent();
     if (!failedStage) {
+      const failedStageName = await withClient(pool, async (client) => {
+        const result = await client.query<{ name: WorkerStageName }>(
+          `SELECT name FROM analysis_stages
+           WHERE workspace_id = $1 AND run_id = $2 AND status = 'queued'
+           ORDER BY array_position($3::text[], name) LIMIT 1`,
+          [job.workspaceId, job.runId, STAGE_NAMES],
+        );
+        return result.rows[0]?.name;
+      });
+      if (!failedStageName) throw error;
       const attemptNumber = await withClient(pool, (client) =>
-        startWorkerStage(client, job, 'acquisition', randomUUID()),
+        startWorkerStage(client, job, failedStageName, randomUUID()),
       );
       if (attemptNumber === null) throw new StaleWorkerLeaseError();
-      failedStage = { name: 'acquisition', attemptNumber };
+      failedStage = { name: failedStageName, attemptNumber, startedAt: performance.now() };
     }
     const retry = decideRetry(error, job.attemptCount, undefined, random);
+    recordWorkerStageDuration(failedStage.name, performance.now() - failedStage.startedAt);
+    recordWorkerFailureMetric(failedStage.name, retry.retry);
     const recorded = await withClient(pool, (client) =>
       recordWorkerFailure(
         client,
@@ -154,6 +252,7 @@ export async function runNextJob(
       ),
     );
     if (!recorded) throw new StaleWorkerLeaseError();
+    if (!retry.retry) recordWorkerRunCompletion('failed');
   } finally {
     stopped = true;
     if (heartbeatTimer) clearTimeout(heartbeatTimer);

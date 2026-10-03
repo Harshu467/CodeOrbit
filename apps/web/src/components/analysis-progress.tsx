@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 
 interface AnalysisStage {
   readonly name: string;
@@ -56,9 +57,7 @@ export function AnalysisProgress({
         consecutiveFailures += 1;
         setPollingIssue(true);
         setMessage(
-          runRef.current
-            ? ''
-            : 'Analysis status could not be loaded. Refresh to try again.',
+          runRef.current ? '' : 'Analysis status could not be loaded. Refresh to try again.',
         );
         if (
           !runRef.current ||
@@ -80,7 +79,11 @@ export function AnalysisProgress({
   if (!run) return <p role="status">{message}</p>;
   return (
     <section aria-live="polite">
-      {reused && <p className="notice" role="status">An existing active analysis was reused.</p>}
+      {reused && (
+        <p className="notice" role="status">
+          An existing active analysis was reused.
+        </p>
+      )}
       {pollingIssue && (
         <p className="notice" role="status">
           Status refresh is temporarily unavailable; retrying automatically.
@@ -89,27 +92,41 @@ export function AnalysisProgress({
       <div className="panel">
         <h2>Status: {run.status}</h2>
         <p>
-          {run.status === 'queued' && 'Analysis is queued and will start when a worker is available.'}
-          {run.status === 'running' && 'Analysis is in progress. Stage status refreshes automatically.'}
+          {run.status === 'queued' &&
+            'Analysis is queued and will start when a worker is available.'}
+          {run.status === 'running' &&
+            'Analysis is in progress. Stage status refreshes automatically.'}
           {run.status === 'completed' && 'Analysis completed successfully.'}
           {run.status === 'partial' && 'Analysis completed with issues or unprocessed scope.'}
           {run.status === 'failed' && 'Analysis failed. Review the stage details below.'}
         </p>
         {run.requestedRevision && <p>Requested revision: {run.requestedRevision}</p>}
-        {run.snapshotRevision && <p>Analyzed revision: <code>{run.snapshotRevision}</code></p>}
-        {run.nextAttemptAt && (
-          <p role="status">Transient failure; retry scheduled for {new Date(run.nextAttemptAt).toLocaleString()}.</p>
+        {run.snapshotRevision && (
+          <p>
+            Analyzed revision: <code>{run.snapshotRevision}</code>
+          </p>
         )}
-        {run.error && <p className="error" role="alert">{run.error.message}</p>}
+        {run.nextAttemptAt && (
+          <p role="status">
+            Transient failure; retry scheduled for {new Date(run.nextAttemptAt).toLocaleString()}.
+          </p>
+        )}
+        {run.error && (
+          <p className="error" role="alert">
+            {run.error.message}
+          </p>
+        )}
       </div>
       <h2>Analysis stages</h2>
       <ol className="stage-list">
         {run.stages.map((stage) => (
           <li className="panel" key={stage.name}>
             <h3>{stage.name.replaceAll('_', ' ')}</h3>
-            <p>Status: {stage.status} · Attempts: {stage.attemptCount}</p>
-            {stage.progress && (
-              stage.progress.total !== undefined && stage.progress.total > 0 ? (
+            <p>
+              Status: {stage.status} · Attempts: {stage.attemptCount}
+            </p>
+            {stage.progress &&
+              (stage.progress.total !== undefined && stage.progress.total > 0 ? (
                 <label>
                   Progress: {stage.progress.current ?? 0} / {stage.progress.total}
                   <progress
@@ -118,12 +135,20 @@ export function AnalysisProgress({
                     max={stage.progress.total}
                   />
                 </label>
-              ) : <p>Progress: {stage.progress.current ?? 0}</p>
-            )}
+              ) : (
+                <p>Progress: {stage.progress.current ?? 0}</p>
+              ))}
             {stage.error && <p className="error">{stage.error.message}</p>}
           </li>
         ))}
       </ol>
+      {run.status !== 'queued' && run.status !== 'running' && (
+        <p>
+          <Link href={`/analysis-runs/${encodeURIComponent(run.id)}/summary`}>
+            View analysis results
+          </Link>
+        </p>
+      )}
     </section>
   );
 }

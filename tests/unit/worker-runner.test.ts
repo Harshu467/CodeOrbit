@@ -4,11 +4,14 @@ import type { ClaimedJob } from '@codeorbit/persistence';
 const persistence = vi.hoisted(() => ({
   claimNextJob: vi.fn(),
   completeWorkerStage: vi.fn(),
+  finalizeWorkerRun: vi.fn(),
+  getWorkerStageStatus: vi.fn(),
   getPool: vi.fn(),
   isJobLeaseCurrent: vi.fn(),
   recordWorkerFailure: vi.fn(),
   renewJobLease: vi.fn(),
   startWorkerStage: vi.fn(),
+  updateWorkerStageProgress: vi.fn(),
 }));
 
 vi.mock('../../packages/persistence/src/index.js', () => persistence);
@@ -22,7 +25,20 @@ const job: ClaimedJob = {
   attemptCount: 2,
 };
 const pool = {
-  connect: async () => ({ release: () => undefined }),
+  connect: async () => ({
+    query: async () => ({
+      rows: [
+        'acquisition',
+        'file_discovery',
+        'language_detection',
+        'parsing',
+        'symbol_extraction',
+        'relationship_extraction',
+        'persistence',
+      ].map((name) => ({ name, status: 'completed' })),
+    }),
+    release: () => undefined,
+  }),
 } as never;
 
 describe('analysis worker runner', () => {
@@ -33,6 +49,8 @@ describe('analysis worker runner', () => {
     persistence.startWorkerStage.mockResolvedValue(1);
     persistence.completeWorkerStage.mockResolvedValue(true);
     persistence.recordWorkerFailure.mockResolvedValue(true);
+    persistence.finalizeWorkerRun.mockResolvedValue(true);
+    persistence.getWorkerStageStatus.mockResolvedValue({ status: 'queued', attemptCount: 0 });
   });
 
   it('persists stage attempts and completes their transitions', async () => {

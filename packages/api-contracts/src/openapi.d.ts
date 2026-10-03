@@ -252,6 +252,7 @@ export interface components {
                 tests: number;
                 dependencies: number;
                 relationships: number;
+                unresolvedRelationships: number;
             };
             issues: components["schemas"]["AnalysisError"][];
         };

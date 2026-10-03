@@ -164,6 +164,9 @@ importers:
       '@codeorbit/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@codeorbit/github-provider':
+        specifier: workspace:*
+        version: link:../../packages/source-providers/github
       '@codeorbit/javascript-typescript-analyzer':
         specifier: workspace:*
         version: link:../../packages/analyzers/javascript-typescript
@@ -251,6 +254,9 @@ importers:
 
   packages/persistence:
     dependencies:
+      '@codeorbit/domain':
+        specifier: workspace:*
+        version: link:../domain
       pg:
         specifier: ^8.14.1
         version: 8.23.1

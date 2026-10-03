@@ -12,6 +12,7 @@
     "@codeorbit/persistence": "workspace:*",
     "@codeorbit/source-provider-contracts": "workspace:*",
     "@codeorbit/analyzer-contracts": "workspace:*",
-    "@codeorbit/javascript-typescript-analyzer": "workspace:*"
+    "@codeorbit/javascript-typescript-analyzer": "workspace:*",
+    "@codeorbit/github-provider": "workspace:*"
   }
 }

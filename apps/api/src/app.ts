@@ -3,6 +3,7 @@ import { DomainError } from '@codeorbit/domain';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerRepositoryRoutes } from './routes/repositories.js';
 import { registerAnalysisRunRoutes } from './routes/analysis-runs.js';
+import { registerAnalysisSummaryRoutes } from './routes/analysis-summary.js';
 import {
   registerGitHubInstallationRoutes,
   type GitHubInstallationProvider,
@@ -16,7 +17,9 @@ import type {
 } from './services/repository-service.js';
 import { AnalysisRunService } from './services/analysis-run-service.js';
 import type { AnalysisRunServicePort } from './services/analysis-run-service.js';
+import { AnalysisSummaryService } from './services/analysis-summary-service.js';
 import type { FastifyRequest } from 'fastify';
+import { registerApiMetrics } from './observability/metrics.js';
 
 type AppGitHubProvider = RepositorySourceProvider &
   GitHubInstallationProvider &
@@ -25,6 +28,7 @@ type AppGitHubProvider = RepositorySourceProvider &
 interface AppOptions {
   readonly repositoryService?: RepositoryServicePort;
   readonly analysisRunService?: AnalysisRunServicePort;
+  readonly analysisSummaryService?: Pick<AnalysisSummaryService, 'get'>;
   readonly githubProvider?: AppGitHubProvider;
   readonly authenticateRequest?: (request: FastifyRequest) => Promise<void>;
 }
@@ -66,8 +70,11 @@ export function createApp(options: AppOptions = {}) {
       },
       'Unhandled request failure',
     );
-    return reply.code(500).send({ error: 'internal_error', details: 'The request could not be completed.' });
+    return reply
+      .code(500)
+      .send({ error: 'internal_error', details: 'The request could not be completed.' });
   });
+  void registerApiMetrics(app);
   const provider = options.githubProvider ?? new GitHubSourceProvider();
   void registerHealthRoutes(app);
   void registerGitHubInstallationRoutes(app, provider, options.authenticateRequest);
@@ -79,6 +86,11 @@ export function createApp(options: AppOptions = {}) {
   void registerAnalysisRunRoutes(
     app,
     options.analysisRunService ?? new AnalysisRunService(provider),
+    options.authenticateRequest,
+  );
+  void registerAnalysisSummaryRoutes(
+    app,
+    options.analysisSummaryService ?? new AnalysisSummaryService(),
     options.authenticateRequest,
   );
   return app;

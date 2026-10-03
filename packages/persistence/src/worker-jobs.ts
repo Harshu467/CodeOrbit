@@ -16,6 +16,30 @@ export interface ClaimedJob {
   readonly attemptCount: number;
 }
 
+export type WorkerStageStatus =
+  'queued' | 'running' | 'completed' | 'partial' | 'failed' | 'skipped';
+
+export async function getWorkerStageStatus(
+  client: pg.PoolClient,
+  job: ClaimedJob,
+  stageName: WorkerStageName,
+): Promise<{ readonly status: WorkerStageStatus; readonly attemptCount: number } | null> {
+  const result = await client.query<{
+    status: WorkerStageStatus;
+    attempt_count: number;
+  }>(
+    `SELECT s.status, s.attempt_count
+     FROM analysis_stages s
+     JOIN analysis_runs r ON r.workspace_id = s.workspace_id AND r.id = s.run_id
+     WHERE r.workspace_id = $1 AND r.id = $2 AND r.status = 'running'
+       AND r.lease_generation = $3 AND r.lease_expires_at > clock_timestamp()
+       AND s.name = $4`,
+    [job.workspaceId, job.runId, job.leaseGeneration, stageName],
+  );
+  const row = result.rows[0];
+  return row ? { status: row.status, attemptCount: row.attempt_count } : null;
+}
+
 const DEFAULT_MAX_ATTEMPTS = 5;
 
 export async function claimNextJob(
@@ -110,11 +134,20 @@ export async function claimNextJob(
              AND a.stage_name = s.name
          ))
        RETURNING s.run_id
+     ), recovered_completed_stages AS (
+       UPDATE analysis_stages s SET status = 'queued', completed_at = NULL,
+         duration_ms = NULL,
+         error_code = NULL, error_summary = NULL
+       FROM candidate c
+       WHERE c.status = 'running' AND s.workspace_id = c.workspace_id AND s.run_id = c.id
+         AND s.status = 'completed'
+       RETURNING s.run_id
      ), recovery_barrier AS (
-       SELECT count(*) FROM recovered_stages
+       SELECT (SELECT count(*) FROM recovered_stages) +
+              (SELECT count(*) FROM recovered_completed_stages) AS recovered_count
      )
      UPDATE analysis_runs r SET status='running', started_at=COALESCE(started_at, now()),
-       attempt_count=attempt_count+1, lease_generation=lease_generation+1,
+       attempt_count=r.attempt_count+1, lease_generation=r.lease_generation+1,
        next_attempt_at=NULL, lease_expires_at=now() + interval '60 seconds'
      FROM candidate, recovery_barrier
      WHERE r.id=candidate.id AND r.workspace_id=candidate.workspace_id
@@ -152,15 +185,15 @@ export async function startWorkerStage(
        FROM current_lease l
        WHERE s.workspace_id = l.workspace_id AND s.run_id = $2 AND s.name = $4
          AND s.status = 'queued'
-       RETURNING s.workspace_id, s.attempt_count
+       RETURNING s.workspace_id, s.attempt_count AS attempt_number
      ), inserted AS (
        INSERT INTO analysis_attempts
          (id, workspace_id, run_id, stage_name, attempt_number, status)
-       SELECT $5, t.workspace_id, $2, $4, t.attempt_count, 'running'
+       SELECT $5, t.workspace_id, $2, $4, t.attempt_number, 'running'
        FROM transitioned t
        RETURNING attempt_number
      )
-     SELECT attempt_count FROM transitioned JOIN inserted USING (attempt_number)`,
+     SELECT attempt_number AS attempt_count FROM transitioned JOIN inserted USING (attempt_number)`,
     [job.workspaceId, job.runId, job.leaseGeneration, stageName, attemptId],
   );
   return result.rows[0]?.attempt_count ?? null;
@@ -230,6 +263,48 @@ export async function isJobLeaseCurrent(
   return result.rowCount === 1;
 }
 
+export async function updateWorkerStageProgress(
+  client: pg.PoolClient,
+  job: ClaimedJob,
+  stageName: WorkerStageName,
+  current: number,
+  total: number | null,
+): Promise<boolean> {
+  if (
+    !Number.isSafeInteger(current) ||
+    current < 0 ||
+    (total !== null && (!Number.isSafeInteger(total) || total < current))
+  ) {
+    throw new RangeError('Worker stage progress must be non-negative and cannot exceed its total.');
+  }
+  const result = await client.query(
+    `UPDATE analysis_stages s SET progress_current = $5, progress_total = $6
+     FROM analysis_runs r
+     WHERE s.workspace_id = r.workspace_id AND s.run_id = r.id AND s.name = $4
+       AND r.workspace_id = $1 AND r.id = $2 AND r.status = 'running'
+       AND r.lease_generation = $3 AND r.lease_expires_at > clock_timestamp()
+       AND s.status = 'running'`,
+    [job.workspaceId, job.runId, job.leaseGeneration, stageName, current, total],
+  );
+  return result.rowCount === 1;
+}
+
+export async function finalizeWorkerRun(
+  client: pg.PoolClient,
+  job: ClaimedJob,
+  status: 'completed' | 'partial' | 'failed',
+  errorSummary?: string,
+): Promise<boolean> {
+  const result = await client.query(
+    `UPDATE analysis_runs SET status = $4, completed_at = now(),
+       lease_expires_at = NULL, next_attempt_at = NULL, error_summary = $5
+     WHERE workspace_id = $1 AND id = $2 AND status = 'running'
+       AND lease_generation = $3 AND lease_expires_at > clock_timestamp()`,
+    [job.workspaceId, job.runId, job.leaseGeneration, status, errorSummary ?? null],
+  );
+  return result.rowCount === 1;
+}
+
 export async function recordWorkerFailure(
   client: pg.PoolClient,
   job: ClaimedJob,
@@ -262,6 +337,15 @@ export async function recordWorkerFailure(
          AND s.name = a.stage_name AND s.attempt_count = a.attempt_number
          AND s.status = 'running'
        RETURNING s.run_id
+     ), requeued_completed_stages AS (
+       UPDATE analysis_stages s SET status = 'queued', completed_at = NULL,
+         duration_ms = NULL, error_code = NULL, error_summary = NULL
+       FROM current_lease l
+       WHERE $4 AND s.workspace_id = l.workspace_id AND s.run_id = $1
+         AND s.status = 'completed'
+       RETURNING s.run_id
+     ), requeue_barrier AS (
+       SELECT count(*) FROM requeued_completed_stages
      ), updated_run AS (
        UPDATE analysis_runs r SET
        status = CASE WHEN $4 THEN 'queued' ELSE 'failed' END,
@@ -272,7 +356,7 @@ export async function recordWorkerFailure(
        END,
        lease_expires_at = NULL,
        error_summary = $7
-       FROM current_lease l, failed_stage s
+       FROM current_lease l, failed_stage s, requeue_barrier
        WHERE r.id = $1 AND r.workspace_id = l.workspace_id AND r.status = 'running'
          AND r.lease_generation = $3
        RETURNING r.id

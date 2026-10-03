@@ -26,14 +26,20 @@ export function deriveRunStatus(input: CompletionInput): RunStatus {
   if (input.stages.some((stage) => stage.status === 'queued' || stage.status === 'running')) {
     return 'running';
   }
-  if (input.stages.some((stage) => stage.status === 'failed' && stage.name === 'acquisition')) {
+  if (input.stages.some((stage) => stage.status === 'failed')) {
     return 'failed';
   }
-  if (input.stages.some((stage) => stage.status === 'failed' || stage.status === 'skipped')) {
+  if (input.stages.some((stage) => stage.status === 'skipped')) {
     return input.usefulResults ? 'partial' : 'failed';
   }
-  if (input.stages.some((stage) => stage.status === 'partial') || input.itemIssues) return 'partial';
-  if (input.stages.length === STAGE_NAMES.length && input.stages.every((stage) => stage.status === 'completed')) {
+  if (!input.usefulResults) return 'failed';
+  if (input.stages.some((stage) => stage.status === 'partial') || input.itemIssues)
+    return 'partial';
+  if (
+    input.stages.length === STAGE_NAMES.length &&
+    input.stages.every((stage) => stage.status === 'completed') &&
+    input.usefulResults
+  ) {
     return 'completed';
   }
   return input.usefulResults ? 'partial' : 'failed';
